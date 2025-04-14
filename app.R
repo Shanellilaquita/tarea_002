@@ -7,42 +7,7 @@ library(plotly)
 library(tidyr)
 
 ui <- fluidPage(
-  theme = shinytheme("yeti"), # Tema base (opcional)
-  
-  tags$style(HTML("
-    body {
-      background-color: #f5f5dc; /* Beige claro */
-      color: #4b4b4b; /* Texto gris oscuro */
-    }
-    .panel, .well {
-      background-color: #fff8dc; /* Beige más claro */
-      border: 1px solid #e3d5b5; /* Beige intermedio */
-      box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1); /* Sombra sutil */
-    }
-    .btn {
-      background-color: #e3d5b5; /* Beige intermedio */
-      color: #4b4b4b; /* Texto gris oscuro */
-    }
-    .btn:hover {
-      background-color: #c9b18b; /* Beige más oscuro al pasar el cursor */
-      color: #fff; /* Texto blanco */
-    }
-    h1, h2, h3, h4, h5, h6 {
-      color: #4b4b4b; /* Color gris oscuro para encabezados */
-    }
-    .navbar-default .navbar-brand {
-      color: #4b4b4b !important; /* Color del título en la barra */
-    }
-    .nav-tabs > li > a {
-      background-color: #fff8dc; /* Beige más claro */
-      color: #4b4b4b; /* Texto gris oscuro */
-    }
-    .nav-tabs > li.active > a {
-      background-color: #e3d5b5; /* Beige intermedio */
-      color: #fff !important; /* Texto blanco */
-    }
-  ")),
-  
+  theme = shinytheme("cerulean"),
   titlePanel("✨ Pruebas Estadísticas"),
   
   sidebarLayout(
@@ -134,7 +99,7 @@ server <- function(input, output) {
       req(input$num_variables)
       num_vars <- sapply(1:input$num_variables, function(i) input[[paste0("col_numerica_", i)]])
       df_long <- df %>%
-        select(all_of(c(input$col_categorica, num_vars))) %>%
+        select(input$col_categorica, all_of(num_vars)) %>%
         pivot_longer(-all_of(input$col_categorica), names_to = "variable", values_to = "valor")
       
       p <- ggplot(df_long, aes(x = df_long[[input$col_categorica]], y = valor, fill = variable)) +
@@ -163,11 +128,16 @@ server <- function(input, output) {
       req(input$num_variables)
       num_vars <- sapply(1:input$num_variables, function(i) input[[paste0("col_numerica_", i)]])
       df_long <- df %>%
-        select(all_of(c(input$col_categorica, num_vars))) %>%
+        select(input$col_categorica, all_of(num_vars)) %>%
         pivot_longer(-all_of(input$col_categorica), names_to = "variable", values_to = "valor")
       
-      resultado_anova <- aov(valor ~ get(input$col_categorica), data = df_long)
+      resultado_anova <- aov(valor ~ df_long[[input$col_categorica]], data = df_long)
       print(summary(resultado_anova))
+      
+      cat("\nTabla ANOVA:\n")
+      anova_table <- summary(resultado_anova)[[1]]
+      print(anova_table)
+      
       cat("\nPrueba de Tukey:\n")
       print(TukeyHSD(resultado_anova))
     } else {
@@ -176,53 +146,49 @@ server <- function(input, output) {
   })
   
   output$interpretacion <- renderUI({
-    req(input$col_categorica, datos())
+    req(input$col_categorica)
     df <- datos()
     grupo <- as.factor(df[[input$col_categorica]])
     p <- NA
-    texto_interpretacion <- ""
     
     if (input$tipo_prueba == "ttest" && length(unique(grupo)) == 2) {
       req(input$col_numerica)
       valor <- df[[input$col_numerica]]
       prueba <- t.test(valor ~ grupo)
       p <- prueba$p.value
-      
-      if (p < 0.05) {
-        texto_interpretacion <- paste0(
-          "La prueba t para muestras independientes sugiere que hay una diferencia significativa en la variable '",
-          input$col_numerica, "' entre los grupos definidos por '", input$col_categorica, 
-          "'. El valor p obtenido (p = ", round(p, 4), 
-          ") es menor al nivel de significancia comúnmente utilizado (α = 0.05), lo que indica que rechazamos la hipótesis nula. Esto implica que los grupos tienen medias significativamente diferentes."
-        )
-      } else {
-        texto_interpretacion <- paste0(
-          "La prueba t para muestras independientes no sugiere una diferencia significativa en la variable '",
-          input$col_numerica, "' entre los grupos definidos por '", input$col_categorica, 
-          "'. El valor p obtenido (p = ", round(p, 4), 
-          ") es mayor al nivel de significancia comúnmente utilizado (α = 0.05), por lo que no se rechaza la hipótesis nula."
-        )
-      }
     } else if (input$tipo_prueba == "anova" && length(unique(grupo)) > 2) {
       req(input$num_variables)
       num_vars <- sapply(1:input$num_variables, function(i) input[[paste0("col_numerica_", i)]])
       df_long <- df %>%
-        select(all_of(c(input$col_categorica, num_vars))) %>%
+        select(input$col_categorica, all_of(num_vars)) %>%
         pivot_longer(-all_of(input$col_categorica), names_to = "variable", values_to = "valor")
       
-      resultado_anova <- aov(valor ~ get(input$col_categorica), data = df_long)
+      resultado_anova <- aov(valor ~ df_long[[input$col_categorica]], data = df_long)
       p <- summary(resultado_anova)[[1]][["Pr(>F)"]][1]
-      
-      if (p < 0.05) {
-        texto_interpretacion <- paste0(
-          "El análisis ANOVA sugiere diferencias significativas en las medias entre los niveles de '", input$col_categorica, 
-          "'. Valor p (", round(p, 4), "). Esto implica diferencias relevantes. Prueba Tukey recomendada."
-        )
-      } else {
-        texto_interpretacion <- "No hay diferencias significativas según ANOVA."
-      }
     }
-    HTML(paste0("<b>Interpretación:</b><br>", texto_interpretacion))
+    
+    if (is.na(p)) {
+      HTML("⚠️ No se pudo calcular el valor p.")
+    } else if (p < 0.05) {
+      if (input$tipo_prueba == "ttest") {
+        HTML(paste0(
+          "🧠 <b>Interpretación:</b> La prueba t indica que hay una 
+          <span style='color:green'><b>diferencia significativa</b></span> entre los dos grupos en la variable seleccionada (p = ", 
+          round(p, 4), "). Esto sugiere que los grupos difieren en promedio en la medida analizada."
+        ))
+      } else if (input$tipo_prueba == "anova") {
+        HTML(paste0(
+          "🧠 <b>Interpretación:</b> El análisis ANOVA muestra una 
+          <span style='color:green'><b>diferencia significativa</b></span> entre los grupos en las variables seleccionadas (p = ", 
+          round(p, 4), "). Esto implica que al menos un grupo difiere significativamente de los demás."
+        ))
+      }
+    } else {
+      HTML(paste0(
+        "🧠 <b>Interpretación:</b> No se encontró una diferencia significativa entre los grupos (p = ", 
+        round(p, 4), "). Esto indica que no hay suficiente evidencia para rechazar la hipótesis nula."
+      ))
+    }
   })
   
   output$descargar_resultados <- downloadHandler(
